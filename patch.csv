@@ -1,0 +1,4 @@
+Chan,Address,Universe,Device Type,Mode,Footprint,Label
+1,1,1,ETC Source Four LED Series 2 Lustr,15ch,15,FOH Left
+2,50,1,ETC Source Four (Dimmer),Dimmer,1,FOH Right
+3,100,1,LED Strip (Generic),8ch,8,SR Strip
