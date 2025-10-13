@@ -2,6 +2,9 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    // Tauri build
+    tauri_build::build();
+
     // Tell cargo to look for shared libraries in the specified directory
     println!("cargo:rustc-link-search=.");
 

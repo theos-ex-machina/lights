@@ -1,100 +1,125 @@
-use std::{
-    ffi::CString,
-    sync::{Arc, Mutex},
-    thread,
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
 
-use crate::{
-    cli::run_cli_threaded,
-    fixture::{
-        patch::{ChannelType, PatchedFixture, ETC_SOURCE_FOUR_CONVENTIONAL},
-        Universe,
-    },
+#[cfg(not(feature = "no-dmx"))]
+use std::{ffi::CString, thread, time::Duration};
+
+use crate::fixture::{
+    patch::{PatchedFixture, ETC_SOURCE_FOUR_CONVENTIONAL, RGB_LED_FIXTURE},
+    Universe,
 };
 
 mod cli;
 mod fixture;
+mod gui;
 
 // Include the bindgen-generated bindings
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
+#[cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
+
 fn main() {
-    // Create the universe with initial fixture
+    // Create the universe with initial fixtures
     let mut universe = Universe::new(0);
 
+    // Add some example fixtures
     let source_four = PatchedFixture {
         id: "Source Four".to_string(),
-        channel: 75,
+        channel: 1,
         profile: ETC_SOURCE_FOUR_CONVENTIONAL.clone(),
-        dmx_start: 1, // DMX addresses start at 1, not 0
-        label: "center downlight".to_string(),
+        dmx_start: 1,
+        label: "Center Downlight".to_string(),
     };
     universe.add_fixture(source_four);
 
-    // Set initial intensity
-    if let Err(error) = universe.set_fixture_values(75, &[(ChannelType::INTENSITY, 255u8)]) {
-        eprintln!("{}", error);
-    }
+    let source_four_2 = PatchedFixture {
+        id: "Source Four 2".to_string(),
+        channel: 2,
+        profile: ETC_SOURCE_FOUR_CONVENTIONAL.clone(),
+        dmx_start: 2,
+        label: "Side Light".to_string(),
+    };
+    universe.add_fixture(source_four_2);
+
+    // Add RGB LED fixture
+    let rgb_led = PatchedFixture {
+        id: "RGB LED".to_string(),
+        channel: 3,
+        profile: RGB_LED_FIXTURE.clone(),
+        dmx_start: 10,
+        label: "RGB Strip".to_string(),
+    };
+    universe.add_fixture(rgb_led);
 
     // Wrap universe in Arc<Mutex<>> for thread-safe sharing
     let universe = Arc::new(Mutex::new(universe));
 
-    // Open DMX port
-    let port = CString::new("COM3").expect("Failed to create port string");
-    let fd = unsafe { dmx_open(port.as_ptr()) };
+    // DMX hardware support - disabled only when 'no-dmx' feature is enabled
+    #[cfg(not(feature = "no-dmx"))]
+    {
+        // Open DMX port
+        let port = CString::new("COM3").expect("Failed to create port string");
+        let fd = unsafe { dmx_open(port.as_ptr()) };
 
-    if fd < 0 {
-        eprintln!("Failed to open DMX port COM3");
-        return;
-    }
-    println!("DMX port opened successfully!");
+        if fd >= 0 {
+            println!("✓ DMX port opened successfully!");
 
-    // Clone the Arc for the DMX thread
-    let universe_dmx = Arc::clone(&universe);
+            // Clone the Arc for the DMX thread
+            let universe_dmx = Arc::clone(&universe);
 
-    // Spawn DMX output thread
-    let dmx_handle = thread::spawn(move || {
-        println!("DMX output thread started - sending data every 25ms");
+            // Spawn DMX output thread
+            thread::spawn(move || {
+                println!("DMX output thread started - sending data every 25ms");
 
-        loop {
-            // Lock the universe and send buffer
-            if let Ok(universe_guard) = universe_dmx.lock() {
-                unsafe {
-                    if let Err(error) = universe_guard.send_buffer(fd) {
-                        eprintln!("DMX send error: {}", error);
-                        break; // Exit thread on error
+                loop {
+                    // Lock the universe and send buffer
+                    if let Ok(universe_guard) = universe_dmx.lock() {
+                        unsafe {
+                            if let Err(error) = universe_guard.send_buffer(fd) {
+                                eprintln!("DMX send error: {}", error);
+                                break;
+                            }
+                        }
+                    } else {
+                        eprintln!("Failed to lock universe mutex");
+                        break;
                     }
+
+                    // DMX refresh rate: ~40Hz (25ms between frames)
+                    thread::sleep(Duration::from_millis(25));
                 }
-            } else {
-                eprintln!("Failed to lock universe mutex");
-                break;
-            }
 
-            // DMX refresh rate: ~40Hz (25ms between frames)
-            thread::sleep(Duration::from_millis(25));
+                // Clean up: close DMX port
+                unsafe {
+                    dmx_close(fd);
+                    println!("DMX port closed");
+                }
+            });
+        } else {
+            eprintln!("⚠ Failed to open DMX port COM3 - running without DMX output");
         }
-
-        // Clean up: close DMX port
-        unsafe {
-            dmx_close(fd);
-            println!("DMX port closed");
-        }
-    });
-
-    // Run CLI on main thread with shared universe
-    println!("Starting CLI interface...");
-    println!("Type 'quit' or 'exit' to stop the program");
-
-    run_cli_threaded(Arc::clone(&universe));
-
-    // Signal DMX thread to stop (in a real implementation, you'd use a channel or atomic bool)
-    println!("Shutting down...");
-
-    // Wait for DMX thread to finish
-    if let Err(e) = dmx_handle.join() {
-        eprintln!("DMX thread panicked: {:?}", e);
     }
+
+    #[cfg(feature = "no-dmx")]
+    {
+        println!("ℹ Running in NO-DMX mode - DMX hardware disabled");
+        println!("  To enable DMX: cargo run (without --features no-dmx)");
+    }
+
+    // Start Tauri application
+    tauri::Builder::default()
+        .manage(universe)
+        .invoke_handler(tauri::generate_handler![
+            gui::get_fixtures,
+            gui::set_channel_value,
+            gui::blackout,
+            gui::set_intensity,
+            gui::set_rgb
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }
 
 /// reads from the dmx frame and dumps it to std out

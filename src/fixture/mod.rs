@@ -68,7 +68,8 @@ impl Universe {
         channel: usize,
         values: &[(ChannelType, u8)],
     ) -> Result<(), String> {
-        let mut updates: Vec<(usize, u8)> = Vec::new();
+        let mut updates: Vec<(usize, u8)> = Vec::with_capacity(values.len());
+
         if let Some(fixture) = self.get_fixture(channel) {
             for (function, new_value) in values {
                 if let Some(offset) = fixture.profile.channels.get(function) {

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DMX Lights Controller</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #ffffff;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      padding: 0 10px;
+    }
+
+    .header h1 {
+      margin: 0;
+      color: #00ff88;
+    }
+
+    .status {
+      padding: 5px 15px;
+      background: #333;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+
+    .fixtures-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+
+    .fixture-panel {
+      background: #2a2a2a;
+      border-radius: 10px;
+      padding: 20px;
+      border: 1px solid #444;
+    }
+
+    .fixture-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .fixture-title {
+      font-size: 18px;
+      font-weight: bold;
+      color: #00ff88;
+    }
+
+    .fixture-info {
+      font-size: 12px;
+      color: #888;
+    }
+
+    .channel-control {
+      margin-bottom: 15px;
+    }
+
+    .channel-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 5px;
+      font-size: 14px;
+    }
+
+    .channel-name {
+      color: #ccc;
+    }
+
+    .channel-value {
+      color: #00ff88;
+      font-weight: bold;
+    }
+
+    .slider-container {
+      position: relative;
+    }
+
+    .slider {
+      width: 100%;
+      height: 30px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #444;
+      border-radius: 15px;
+      outline: none;
+    }
+
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 25px;
+      height: 25px;
+      background: #00ff88;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .slider::-moz-range-thumb {
+      width: 25px;
+      height: 25px;
+      background: #00ff88;
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+    }
+
+    .blackout-btn {
+      position: fixed;
+      bottom: 30px;
+      right: 30px;
+      background: #ff4444;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      border-radius: 50px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(255, 68, 68, 0.3);
+      transition: all 0.3s ease;
+    }
+
+    .blackout-btn:hover {
+      background: #ff2222;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(255, 68, 68, 0.4);
+    }
+
+    .no-fixtures {
+      text-align: center;
+      color: #666;
+      font-size: 18px;
+      margin-top: 100px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="header">
+    <h1>🎭 Lights </h1>
+    <div class="status" id="status">Connecting...</div>
+  </div>
+
+  <div class="fixtures-container" id="fixtures-container">
+    <div class="no-fixtures">
+      Loading fixtures...
+    </div>
+  </div>
+
+  <button class="blackout-btn" onclick="blackout()">BLACKOUT</button>
+
+  <script type="module">
+    import { invoke } from 'tauri://api/tauri';
+    window.__TAURI_INVOKE__ = invoke;
+    window.dispatchEvent(new Event('tauri-invoke-ready'));
+  </script>
+
+  <script>
+    let invoke;
+    let fixtures = [];
+
+    function setError(message) {
+      const statusEl = document.getElementById('status');
+      const container = document.getElementById('fixtures-container');
+      statusEl.textContent = message;
+      statusEl.style.background = '#5a2d2d';
+      container.innerHTML = '<div class="no-fixtures">' + message + '</div>';
+    }
+
+    async function waitForInvoke(timeoutMs = 5000) {
+      if (typeof invoke === 'function') {
+        return invoke;
+      }
+      if (typeof window.__TAURI_INVOKE__ === 'function') {
+        invoke = window.__TAURI_INVOKE__;
+        return invoke;
+      }
+
+      return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error('Timed out waiting for Tauri invoke function'));
+        }, timeoutMs);
+
+        window.addEventListener('tauri-invoke-ready', () => {
+          clearTimeout(timeoutId);
+          invoke = window.__TAURI_INVOKE__;
+          if (typeof invoke === 'function') {
+            resolve(invoke);
+          } else {
+            reject(new Error('Tauri invoke function not supplied even after event'));
+          }
+        }, { once: true });
+      });
+    }
+
+    // Load fixtures on startup
+    async function loadFixtures() {
+      console.log('loadFixtures called');
+      try {
+        await waitForInvoke();
+        console.log('Calling get_fixtures...');
+        fixtures = await invoke('get_fixtures');
+        console.log('Received fixtures:', fixtures);
+        renderFixtures();
+        document.getElementById('status').textContent = 'Connected';
+        document.getElementById('status').style.background = '#2d5a2d';
+      } catch (error) {
+        console.error('Failed to load fixtures:', error);
+        document.getElementById('status').textContent = 'Error';
+        document.getElementById('status').style.background = '#5a2d2d';
+        document.getElementById('fixtures-container').innerHTML =
+          `<div class="no-fixtures">Error loading fixtures: ${error}</div>`;
+      }
+    }
+
+    function renderFixtures() {
+      const container = document.getElementById('fixtures-container');
+
+      if (fixtures.length === 0) {
+        container.innerHTML = '<div class="no-fixtures">No fixtures patched</div>';
+        return;
+      }
+
+      container.innerHTML = fixtures.map(fixture => `
+                <div class="fixture-panel">
+                    <div class="fixture-header">
+                        <div class="fixture-title">Ch ${fixture.channel}: ${fixture.label}</div>
+                        <div class="fixture-info">DMX ${fixture.dmx_start}</div>
+                    </div>
+                    ${renderChannels(fixture)}
+                </div>
+            `).join('');
+    }
+
+    function renderChannels(fixture) {
+      return Object.entries(fixture.channels).map(([channelType, offset]) => `
+                <div class="channel-control">
+                    <div class="channel-label">
+                        <span class="channel-name">${channelType}</span>
+                        <span class="channel-value" id="value-${fixture.channel}-${channelType}">0</span>
+                    </div>
+                    <div class="slider-container">
+                        <input 
+                            type="range" 
+                            min="0" 
+                            max="255" 
+                            value="0" 
+                            class="slider"
+                            id="slider-${fixture.channel}-${channelType}"
+                            onInput="updateChannel(${fixture.channel}, '${channelType}', this.value)"
+                        >
+                    </div>
+                </div>
+            `).join('');
+    }
+
+    async function updateChannel(channel, channelType, value) {
+      try {
+        await invoke('set_channel_value', {
+          channel: parseInt(channel),
+          channelType: channelType,
+          value: parseInt(value)
+        });
+
+        // Update display value
+        const valueElement = document.getElementById(`value-${channel}-${channelType}`);
+        if (valueElement) {
+          valueElement.textContent = value;
+        }
+      } catch (error) {
+        console.error('Failed to update channel:', error);
+      }
+    }
+
+    async function blackout() {
+      try {
+        await invoke('blackout');
+
+        // Reset all sliders to 0
+        document.querySelectorAll('.slider').forEach(slider => {
+          slider.value = 0;
+        });
+
+        // Reset all value displays
+        document.querySelectorAll('.channel-value').forEach(value => {
+          value.textContent = '0';
+        });
+
+      } catch (error) {
+        console.error('Blackout failed:', error);
+      }
+    }
+
+    // Load fixtures when page loads
+    async function startApp() {
+      try {
+        await waitForInvoke();
+        await loadFixtures();
+      } catch (error) {
+        console.error('Failed to initialize Tauri invoke:', error);
+        setError('Error initializing Tauri API: ' + error.message);
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', startApp);
+    } else {
+      startApp();
+    }
+  </script>
+</body>
+
+</html>

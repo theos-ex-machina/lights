@@ -1,4 +1,3 @@
-use std::collections::hash_map;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -45,5 +44,20 @@ pub static ETC_SOURCE_FOUR_CONVENTIONAL: LazyLock<Arc<FixtureProfile>> = LazyLoc
         name: "ETC Source Four Conventional".to_string(),
         footprint: 1,
         channels: [(ChannelType::INTENSITY, 0u8)].into_iter().collect(),
+    })
+});
+
+pub static RGB_LED_FIXTURE: LazyLock<Arc<FixtureProfile>> = LazyLock::new(|| {
+    Arc::new(FixtureProfile {
+        name: "RGB LED Fixture".to_string(),
+        footprint: 4,
+        channels: [
+            (ChannelType::INTENSITY, 0u8),
+            (ChannelType::RED, 1u8),
+            (ChannelType::GREEN, 2u8),
+            (ChannelType::BLUE, 3u8),
+        ]
+        .into_iter()
+        .collect(),
     })
 });
