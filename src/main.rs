@@ -1,6 +1,6 @@
 use std::{
     ffi::CString,
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -32,7 +32,7 @@ fn main() {
         }
         Err(e) => {
             println!("⚠ Could not load fixture database: {}", e);
-           return;
+            return;
         }
     };
 
@@ -157,6 +157,9 @@ fn run_with_universe(universe: Universe) {
     }
     println!("DMX port opened successfully!");
 
+    // Create shutdown channel for clean thread termination
+    let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
     // Clone the Arc for the DMX thread
     let universe_dmx = Arc::clone(&universe);
 
@@ -165,6 +168,12 @@ fn run_with_universe(universe: Universe) {
         println!("DMX output thread started - sending data every 25ms");
 
         loop {
+            // Check for shutdown signal (non-blocking)
+            if shutdown_rx.try_recv().is_ok() {
+                println!("DMX thread received shutdown signal");
+                break;
+            }
+
             // Lock the universe and send buffer
             if let Ok(universe_guard) = universe_dmx.lock() {
                 unsafe {
@@ -195,12 +204,17 @@ fn run_with_universe(universe: Universe) {
 
     run_cli_threaded(Arc::clone(&universe));
 
-    // Signal DMX thread to stop (in a real implementation, you'd use a channel or atomic bool)
+    // Signal DMX thread to stop cleanly
     println!("Shutting down...");
+    if let Err(e) = shutdown_tx.send(()) {
+        eprintln!("Failed to send shutdown signal: {}", e);
+    }
 
-    // Wait for DMX thread to finish
+    // Wait for DMX thread to finish gracefully
     if let Err(e) = dmx_handle.join() {
         eprintln!("DMX thread panicked: {:?}", e);
+    } else {
+        println!("DMX thread shut down cleanly");
     }
 }
 
