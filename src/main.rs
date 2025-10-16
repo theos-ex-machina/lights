@@ -9,6 +9,7 @@ use crate::{
     cli::run_cli_threaded,
     fixture::{
         patch::{ChannelType, PatchedFixture, ETC_SOURCE_FOUR_CONVENTIONAL},
+        registry::FixtureRegistry,
         Universe,
     },
 };
@@ -20,23 +21,129 @@ mod fixture;
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 fn main() {
-    // Create the universe with initial fixture
+    println!("Lights DMX Controller");
+    println!("====================");
+
+    // Initialize fixture registry
+    let mut registry = match FixtureRegistry::new("fixture-data") {
+        Ok(registry) => {
+            println!("✓ Loaded fixture database from fixture-data/");
+            registry
+        }
+        Err(e) => {
+            println!("⚠ Could not load fixture database: {}", e);
+           return;
+        }
+    };
+
+    // Create the universe with fixtures from registry
     let mut universe = Universe::new(0);
 
-    let source_four = PatchedFixture {
-        id: "Source Four".to_string(),
-        channel: 75,
-        profile: ETC_SOURCE_FOUR_CONVENTIONAL.clone(),
-        dmx_start: 1, // DMX addresses start at 1, not 0
-        label: "center downlight".to_string(),
-    };
-    universe.add_fixture(source_four);
+    // Try to load an ETC ColorSource PAR as an example
+    match registry.create_patched_fixture(
+        "etc",
+        "colorsource-par",
+        "5 Channel (Default)",
+        1,  // Channel 1
+        10, // DMX start address 10
+        "Front wash".to_string(),
+    ) {
+        Ok(fixture) => {
+            println!("✓ Created ETC ColorSource PAR fixture");
+            universe.add_fixture(fixture);
 
-    // Set initial intensity
-    if let Err(error) = universe.set_fixture_values(75, &[(ChannelType::INTENSITY, 255u8)]) {
-        eprintln!("{}", error);
+            // Set some initial values
+            if let Err(error) = universe.set_fixture_values(
+                1,
+                &[
+                    (ChannelType::Intensity, 200u8),
+                    (ChannelType::Red, 255u8),
+                    (ChannelType::Green, 100u8),
+                    (ChannelType::Blue, 50u8),
+                ],
+            ) {
+                eprintln!("Error setting fixture values: {}", error);
+            }
+        }
+        Err(e) => {
+            println!("⚠ Could not load ETC ColorSource PAR: {}", e);
+
+            // Fall back to conventional fixture
+            let source_four = PatchedFixture {
+                id: "Source Four".to_string(),
+                channel: 75,
+                profile: ETC_SOURCE_FOUR_CONVENTIONAL.clone(),
+                dmx_start: 1,
+                label: "center downlight".to_string(),
+            };
+            universe.add_fixture(source_four);
+
+            if let Err(error) = universe.set_fixture_values(75, &[(ChannelType::Intensity, 255u8)])
+            {
+                eprintln!("{}", error);
+            }
+        }
     }
 
+    run_with_universe(universe);
+}
+
+#[allow(dead_code)]
+fn demonstrate_fixture_registry(registry: &mut FixtureRegistry) {
+    println!("\nFixture Database Information:");
+    println!("============================");
+
+    // Show available manufacturers
+    if let Some(manufacturers) = registry.get_manufacturers() {
+        println!("Available manufacturers: {}", manufacturers.len());
+        let mut mfg_names: Vec<_> = manufacturers.keys().collect();
+        mfg_names.sort();
+        for (i, name) in mfg_names.iter().take(5).enumerate() {
+            if let Some(mfg) = manufacturers.get(*name) {
+                println!("  {}. {} ({})", i + 1, mfg.name, name);
+            }
+        }
+        if manufacturers.len() > 5 {
+            println!("  ... and {} more", manufacturers.len() - 5);
+        }
+    }
+
+    // Try to show some ETC fixtures
+    match registry.get_fixtures_for_manufacturer("etc") {
+        Ok(fixtures) => {
+            println!("\nETC fixtures available: {}", fixtures.len());
+            for (i, fixture) in fixtures.iter().take(3).enumerate() {
+                println!("  {}. {}", i + 1, fixture);
+            }
+            if fixtures.len() > 3 {
+                println!("  ... and {} more", fixtures.len() - 3);
+            }
+        }
+        Err(_) => {
+            println!("\nNo ETC fixtures found");
+        }
+    }
+
+    // Search for PAR fixtures
+    match registry.search_fixtures("par") {
+        Ok(results) => {
+            println!("\nPAR fixtures found: {}", results.len());
+            for (i, (mfg, fixture)) in results.iter().take(3).enumerate() {
+                println!("  {}. {} / {}", i + 1, mfg, fixture);
+            }
+            if results.len() > 3 {
+                println!("  ... and {} more", results.len() - 3);
+            }
+        }
+        Err(_) => {
+            println!("\nNo PAR fixtures found");
+        }
+    }
+
+    println!();
+}
+
+fn run_with_universe(universe: Universe) {
     // Wrap universe in Arc<Mutex<>> for thread-safe sharing
     let universe = Arc::new(Mutex::new(universe));
 

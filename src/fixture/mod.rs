@@ -1,4 +1,7 @@
+pub mod loader;
+pub mod ofl;
 pub mod patch;
+pub mod registry;
 
 use crate::{
     dmx_send_break, dmx_write,
@@ -93,16 +96,16 @@ impl Universe {
 
     /// quickly set the intensity of a light
     pub fn set_intensity(&mut self, channel: usize, intensity: u8) -> Result<(), String> {
-        return self.set_fixture_values(channel, &[(ChannelType::INTENSITY, intensity)]);
+        return self.set_fixture_values(channel, &[(ChannelType::Intensity, intensity)]);
     }
 
     pub fn set_rgb(&mut self, channel: usize, r: u8, g: u8, b: u8) -> Result<(), String> {
         return self.set_fixture_values(
             channel,
             &[
-                (ChannelType::RED, r),
-                (ChannelType::GREEN, g),
-                (ChannelType::BLUE, b),
+                (ChannelType::Red, r),
+                (ChannelType::Green, g),
+                (ChannelType::Blue, b),
             ],
         );
     }
