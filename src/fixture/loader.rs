@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::fixture::ofl::{OflFixture, OflManufacturers};
+use anyhow::{anyhow, Result};
 
 pub struct FixtureLoader {
     fixture_data_path: PathBuf,
@@ -21,7 +22,7 @@ impl FixtureLoader {
     }
 
     /// Load the manufacturers database
-    pub fn load_manufacturers(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn load_manufacturers(&mut self) -> Result<()> {
         let manufacturers_path = self.fixture_data_path.join("manufacturers.json");
         let content = fs::read_to_string(&manufacturers_path)?;
         self.manufacturers = Some(serde_json::from_str(&content)?);
@@ -40,7 +41,7 @@ impl FixtureLoader {
         &mut self,
         manufacturer: &str,
         fixture_name: &str,
-    ) -> Result<&OflFixture, Box<dyn std::error::Error>> {
+    ) -> Result<&OflFixture> {
         let key = format!("{}/{}", manufacturer, fixture_name);
 
         // Check if fixture is already loaded
@@ -55,7 +56,7 @@ impl FixtureLoader {
             .join(format!("{}.json", fixture_name));
 
         if !fixture_path.exists() {
-            return Err(format!("Fixture file not found: {}", fixture_path.display()).into());
+            return Err(anyhow!("Fixture file not found: {}", fixture_path.display()).into());
         }
 
         let content = fs::read_to_string(&fixture_path)?;
@@ -69,7 +70,7 @@ impl FixtureLoader {
     pub fn list_fixtures_for_manufacturer(
         &self,
         manufacturer: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>> {
         let manufacturer_dir = self.fixture_data_path.join(manufacturer);
 
         if !manufacturer_dir.exists() || !manufacturer_dir.is_dir() {
@@ -95,7 +96,7 @@ impl FixtureLoader {
     /// Discover all available fixtures
     pub fn discover_all_fixtures(
         &self,
-    ) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
+    ) -> Result<HashMap<String, Vec<String>>> {
         let mut all_fixtures = HashMap::new();
 
         for entry in fs::read_dir(&self.fixture_data_path)? {

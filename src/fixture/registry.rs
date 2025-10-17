@@ -8,6 +8,8 @@ use crate::fixture::{
     patch::{FixtureProfile, PatchedFixture},
 };
 
+use anyhow::{anyhow, Result};
+
 /// Registry for managing fixture definitions and creating patched fixtures
 pub struct FixtureRegistry {
     loader: FixtureLoader,
@@ -15,7 +17,7 @@ pub struct FixtureRegistry {
 }
 
 impl FixtureRegistry {
-    pub fn new<P: AsRef<Path>>(fixture_data_path: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new<P: AsRef<Path>>(fixture_data_path: P) -> Result<Self> {
         let mut loader = FixtureLoader::new(fixture_data_path);
         loader.load_manufacturers()?;
 
@@ -34,7 +36,7 @@ impl FixtureRegistry {
     pub fn get_fixtures_for_manufacturer(
         &self,
         manufacturer: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>> {
         self.loader.list_fixtures_for_manufacturer(manufacturer)
     }
 
@@ -43,7 +45,7 @@ impl FixtureRegistry {
         &mut self,
         manufacturer: &str,
         fixture_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>> {
         let fixture = self.loader.load_fixture(manufacturer, fixture_name)?;
         Ok(fixture.modes.iter().map(|mode| mode.name.clone()).collect())
     }
@@ -54,7 +56,7 @@ impl FixtureRegistry {
         manufacturer: &str,
         fixture_name: &str,
         mode_name: &str,
-    ) -> Result<Arc<FixtureProfile>, Box<dyn std::error::Error>> {
+    ) -> Result<Arc<FixtureProfile>> {
         let cache_key = format!("{}/{}/{}", manufacturer, fixture_name, mode_name);
 
         // Return cached profile if available
@@ -71,7 +73,7 @@ impl FixtureRegistry {
             .iter()
             .find(|m| m.name == mode_name)
             .ok_or_else(|| {
-                format!(
+                anyhow!(
                     "Mode '{}' not found for fixture '{}/{}'",
                     mode_name, manufacturer, fixture_name
                 )
@@ -95,7 +97,7 @@ impl FixtureRegistry {
         channel: usize,
         dmx_start: u16,
         label: String,
-    ) -> Result<PatchedFixture, Box<dyn std::error::Error>> {
+    ) -> Result<PatchedFixture> {
         let profile = self.get_fixture_profile(manufacturer, fixture_name, mode_name)?;
 
         Ok(PatchedFixture {
@@ -110,7 +112,7 @@ impl FixtureRegistry {
     /// Discover all available fixtures across all manufacturers
     pub fn discover_all_fixtures(
         &self,
-    ) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
+    ) -> Result<HashMap<String, Vec<String>>> {
         self.loader.discover_all_fixtures()
     }
 
@@ -118,7 +120,7 @@ impl FixtureRegistry {
     pub fn search_fixtures(
         &self,
         search_term: &str,
-    ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<(String, String)>> {
         let all_fixtures = self.discover_all_fixtures()?;
         let search_lower = search_term.to_lowercase();
         let mut results = Vec::new();
@@ -140,7 +142,7 @@ impl FixtureRegistry {
         &mut self,
         manufacturer: &str,
         fixture_name: &str,
-    ) -> Result<&OflFixture, Box<dyn std::error::Error>> {
+    ) -> Result<&OflFixture> {
         self.loader.load_fixture(manufacturer, fixture_name)
     }
 

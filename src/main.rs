@@ -1,30 +1,23 @@
-use std::{
-    ffi::CString,
-    sync::{mpsc, Arc, Mutex},
-    thread,
-    time::Duration,
-};
-
-use crate::{
-    cli::run_cli_threaded,
-    fixture::{
-        patch::{ChannelType, PatchedFixture, ETC_SOURCE_FOUR_CONVENTIONAL},
-        registry::FixtureRegistry,
-        Universe,
-    },
-};
-
 mod cli;
 mod fixture;
+mod universe;
+
+use std::{ffi::CString, thread};
+
+use crate::{
+    cli::run_cli,
+    fixture::registry::FixtureRegistry,
+    universe::{cue::CueEngine, dmx_thread, Universe},
+};
 
 // Include the bindgen-generated bindings
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 fn main() {
-    println!("Lights DMX Controller");
-    println!("====================");
+    // Create command channel
+    let (command_tx, command_rx) = std::sync::mpsc::channel();
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
 
-    // Initialize fixture registry
     let mut registry = match FixtureRegistry::new("fixture-data") {
         Ok(registry) => {
             println!("✓ Loaded fixture database from fixture-data/");
@@ -36,10 +29,9 @@ fn main() {
         }
     };
 
-    // Create the universe with fixtures from registry
+    // Create universe (will be moved to DMX thread)
     let mut universe = Universe::new(0);
 
-    // Try to load an ETC ColorSource PAR as an example
     match registry.create_patched_fixture(
         "etc",
         "colorsource-par",
@@ -48,44 +40,35 @@ fn main() {
         10, // DMX start address 10
         "Front wash".to_string(),
     ) {
-        Ok(fixture) => {
-            println!("✓ Created ETC ColorSource PAR fixture");
-            universe.add_fixture(fixture);
-
-            // Set some initial values
-            if let Err(error) = universe.set_fixture_values(
-                1,
-                &[
-                    (ChannelType::Intensity, 200u8),
-                    (ChannelType::Red, 255u8),
-                    (ChannelType::Green, 100u8),
-                    (ChannelType::Blue, 50u8),
-                ],
-            ) {
-                eprintln!("Error setting fixture values: {}", error);
-            }
-        }
-        Err(e) => {
-            println!("⚠ Could not load ETC ColorSource PAR: {}", e);
-
-            // Fall back to conventional fixture
-            let source_four = PatchedFixture {
-                id: "Source Four".to_string(),
-                channel: 75,
-                profile: ETC_SOURCE_FOUR_CONVENTIONAL.clone(),
-                dmx_start: 1,
-                label: "center downlight".to_string(),
-            };
-            universe.add_fixture(source_four);
-
-            if let Err(error) = universe.set_fixture_values(75, &[(ChannelType::Intensity, 255u8)])
-            {
-                eprintln!("{}", error);
-            }
-        }
+        Ok(fixture) => universe.add_fixture(fixture),
+        Err(error) => eprintln!("Error adding fixture: {}", error),
     }
 
-    run_with_universe(universe);
+    // Setup DMX
+    let port = CString::new("COM3").expect("Failed to create port string");
+    let fd = unsafe { dmx_open(port.as_ptr()) };
+
+    #[cfg(not(feature = "no-dmx"))]
+    if fd < 0 {
+        eprintln!("Failed to open DMX port COM3");
+        return;
+    }
+
+    // Start DMX thread (takes ownership of universe)
+    let dmx_handle = thread::spawn(move || {
+        dmx_thread(universe, command_rx, shutdown_rx, fd);
+    });
+
+    // Create cue engine with command sender
+    let mut show = CueEngine::new(command_tx.clone());
+
+    // run cli
+    run_cli(command_tx.clone(), &mut show);
+
+    // Shutdown
+    println!("Shutting down...");
+    shutdown_tx.send(()).ok();
+    dmx_handle.join().ok();
 }
 
 #[allow(dead_code)]
@@ -141,81 +124,6 @@ fn demonstrate_fixture_registry(registry: &mut FixtureRegistry) {
     }
 
     println!();
-}
-
-fn run_with_universe(universe: Universe) {
-    // Wrap universe in Arc<Mutex<>> for thread-safe sharing
-    let universe = Arc::new(Mutex::new(universe));
-
-    // Open DMX port
-    let port = CString::new("COM3").expect("Failed to create port string");
-    let fd = unsafe { dmx_open(port.as_ptr()) };
-
-    if fd < 0 {
-        eprintln!("Failed to open DMX port COM3");
-        return;
-    }
-    println!("DMX port opened successfully!");
-
-    // Create shutdown channel for clean thread termination
-    let (shutdown_tx, shutdown_rx) = mpsc::channel();
-
-    // Clone the Arc for the DMX thread
-    let universe_dmx = Arc::clone(&universe);
-
-    // Spawn DMX output thread
-    let dmx_handle = thread::spawn(move || {
-        println!("DMX output thread started - sending data every 25ms");
-
-        loop {
-            // Check for shutdown signal (non-blocking)
-            if shutdown_rx.try_recv().is_ok() {
-                println!("DMX thread received shutdown signal");
-                break;
-            }
-
-            // Lock the universe and send buffer
-            if let Ok(universe_guard) = universe_dmx.lock() {
-                unsafe {
-                    if let Err(error) = universe_guard.send_buffer(fd) {
-                        eprintln!("DMX send error: {}", error);
-                        break; // Exit thread on error
-                    }
-                }
-            } else {
-                eprintln!("Failed to lock universe mutex");
-                break;
-            }
-
-            // DMX refresh rate: ~40Hz (25ms between frames)
-            thread::sleep(Duration::from_millis(25));
-        }
-
-        // Clean up: close DMX port
-        unsafe {
-            dmx_close(fd);
-            println!("DMX port closed");
-        }
-    });
-
-    // Run CLI on main thread with shared universe
-    println!("Starting CLI interface...");
-    println!("Type 'quit' or 'exit' to stop the program");
-
-    run_cli_threaded(Arc::clone(&universe));
-
-    // Signal DMX thread to stop cleanly
-    println!("Shutting down...");
-    if let Err(e) = shutdown_tx.send(()) {
-        eprintln!("Failed to send shutdown signal: {}", e);
-    }
-
-    // Wait for DMX thread to finish gracefully
-    if let Err(e) = dmx_handle.join() {
-        eprintln!("DMX thread panicked: {:?}", e);
-    } else {
-        println!("DMX thread shut down cleanly");
-    }
 }
 
 /// reads from the dmx frame and dumps it to std out
